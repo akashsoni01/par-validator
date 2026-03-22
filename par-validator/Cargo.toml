@@ -16,4 +16,9 @@ rust-key-paths = { version = "2.9.2" }
 wgpu = "22"
 
 [dev-dependencies]
+criterion = "0.5"
 key-paths-derive = "2.4"
+
+[[bench]]
+name = "throughput"
+harness = false

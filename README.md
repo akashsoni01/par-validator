@@ -49,6 +49,26 @@ The nested Rayon example keeps a **deep domain struct** (`BankParty`, charges, F
 
 ---
 
+## Benchmarks
+
+Criterion benchmarks live in [`par-validator/benches/throughput.rs`](par-validator/benches/throughput.rs).
+
+```bash
+cd par-validator
+cargo bench --bench throughput
+```
+
+### Results (reference machine)
+
+| Benchmark | What it measures | Typical time |
+|-----------|------------------|--------------|
+| `rayon_cpu_4096_transfers_x12_builders` | 4 096 flat transfers × 12 [`RuleBuilder`] runs (Rayon over rows + inner `par_iter` in `apply`) | **~2.86 ms** |
+| `wgpu_gpu/12288_numeric_rules_one_dispatch` | 12 288 `NumericRule` rows in one `GpuNumericEngine::run` | **~1.53 ms** |
+
+**Testing machine:** MacBook Air **M1**, Apple Silicon (**arm64**), macOS, Rust **1.85**, `cargo bench` release profile. Figures are Criterion medians from a single run; variance and outliers are normal—re-run locally for your hardware.
+
+---
+
 ## Library layout
 
 - **`RuleBuilder`** — CPU validation keyed by [`KpType`](https://docs.rs/rust-key-paths/latest/rust_key_paths/type.KpType.html).
