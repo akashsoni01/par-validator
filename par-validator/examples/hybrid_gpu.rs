@@ -1,5 +1,7 @@
 //! Minimal end-to-end demo: **Rayon** for string rules, **wgpu** for fixed-point numerics.
 //!
+//! String checks use [`par_validator::Rule`] from [`par_validator::builder`].
+//!
 //! Run: `cargo run --example hybrid_gpu`
 //!
 //! See also `fintech_rayon_nested`, `fintech_gpu_batch`, and `fintech_hybrid_batch` for
@@ -9,45 +11,21 @@ use key_paths_derive::Kp;
 use par_validator::gpu_numeric::{
     GpuErrorCode, GpuNumericEngine, NumericOutput, NumericRule, NumericRuleKind,
 };
-use par_validator::{RuleBuilder, RuleBuilderError};
+use par_validator::Rule;
 use rayon::prelude::*;
 
 mod iso_pain {
-    use par_validator::RuleBuilderError;
-    type IsoError = RuleBuilderError<String>;
-
-    pub fn iso123rule(r: Option<&String>) -> IsoError {
-        if r.map_or(true, |s| s.trim().is_empty()) {
-            IsoError::Fail("iso123: blank or missing".into())
-        } else {
-            IsoError::Success
-        }
+    pub fn iso123_ok(r: Option<&String>) -> bool {
+        !r.map_or(true, |s| s.trim().is_empty())
     }
 
-    pub fn max_len_35(r: Option<&String>) -> IsoError {
-        match r {
-            None    => IsoError::Fail("max_len_35: missing".into()),
-            Some(s) => {
-                if s.len() > 35 {
-                    IsoError::Fail(format!("max_len_35: len={} > 35", s.len()))
-                } else {
-                    IsoError::Success
-                }
-            },
-        }
+    pub fn max_len_35_ok(r: Option<&String>) -> bool {
+        r.map(|s| s.len() <= 35).unwrap_or(false)
     }
 
-    pub fn alpha_num_only(r: Option<&String>) -> IsoError {
-        match r {
-            None => IsoError::Fail("alpha_num_only: missing".into()),
-            Some(s) => {
-                if s.chars().all(|c| c.is_alphanumeric()) {
-                    IsoError::Success
-                } else {
-                    IsoError::Fail(format!("alpha_num_only: invalid chars in '{s}'"))
-                }
-            },
-        }
+    pub fn alpha_num_only_ok(r: Option<&String>) -> bool {
+        r.map(|s| !s.is_empty() && s.chars().all(|c| c.is_alphanumeric()))
+            .unwrap_or(false)
     }
 }
 
@@ -107,7 +85,7 @@ fn print_numeric_results(labels: &[&str], rules: &[NumericRule], results: &[Nume
 
 fn main() {
     pollster::block_on(async {
-        println!("=== String Validation (rayon par_iter) ===\n");
+        println!("=== String Validation (rayon par_iter) — builder::Rule ===\n");
 
         let p = Payment {
             reference: "REF001".into(),
@@ -115,23 +93,27 @@ fn main() {
         };
 
         let string_builders = [
-            RuleBuilder::<Payment, String, String>::new(Payment::reference())
+            Rule::<Payment, String, String>::new(Payment::reference())
                 .with_root(&p)
-                .mandatory_rule(iso_pain::iso123rule)
-                .rule(iso_pain::max_len_35)
-                .rule(iso_pain::alpha_num_only),
-            RuleBuilder::<Payment, String, String>::new(Payment::currency())
+                .mandatory_rule(iso_pain::iso123_ok, "iso123: blank or missing".into())
+                .rule(iso_pain::max_len_35_ok, "max_len_35".into())
+                .rule(iso_pain::alpha_num_only_ok, "alpha_num_only".into()),
+            Rule::<Payment, String, String>::new(Payment::currency())
                 .with_root(&p)
-                .mandatory_rule(iso_pain::iso123rule)
-                .rule(iso_pain::max_len_35)
-                .rule(iso_pain::alpha_num_only),
+                .mandatory_rule(iso_pain::iso123_ok, "iso123: blank or missing".into())
+                .rule(iso_pain::max_len_35_ok, "max_len_35".into())
+                .rule(iso_pain::alpha_num_only_ok, "alpha_num_only".into()),
         ];
 
-        let string_errors: Vec<RuleBuilderError<String>> =
+        let string_failures: Vec<String> =
             string_builders.par_iter().flat_map(|b| b.apply()).collect();
 
-        for e in &string_errors {
-            println!("  {e:?}");
+        if string_failures.is_empty() {
+            println!("  (no string failures)");
+        } else {
+            for msg in &string_failures {
+                println!("  {msg}");
+            }
         }
 
         println!("\n=== Numeric Validation + Calculation (WebGPU) ===\n");

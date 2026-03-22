@@ -3,6 +3,9 @@
 //! Each rule is a **`fn` predicate** paired with an error value `E`. The predicate returns
 //! **`true` if the field is valid**; `false` means failure and the paired `E` is returned from
 //! [`Rule::apply`].
+//!
+//! For loading rule **metadata** (which field, which predicate, error code) from a CSV catalog, see
+//! the `rule_csv_catalog` example and `examples/data/validation_catalog.csv` in the crate source.
 
 use std::fmt::Debug;
 
@@ -11,8 +14,8 @@ use rust_key_paths::{AccessorTrait, KpType};
 
 /// Binds a [`KpType`] (from `#[derive(Kp)]`) to a root value and a list of validation predicates.
 ///
-/// Compared to returning `RuleBuilderError` from each rule, this type stores **`bool` predicates**
-/// and attaches a fixed **`E`** per rule when validation fails.
+/// Each rule is a **`bool` predicate** plus an **`E`** value returned when the predicate is
+/// **`false`**.
 ///
 /// # Semantics
 ///

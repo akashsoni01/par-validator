@@ -1,6 +1,7 @@
 use std::{borrow::Cow, fmt::Debug};
 
-/// Outcome of a single validation rule in a [`crate::RuleBuilder`].
+/// Optional helper enum when you want **success / fail** payloads outside of [`crate::Rule`]’s
+/// `Vec<E>` failure list (this crate’s string validation path uses [`crate::Rule`] + `E` per rule).
 #[derive(Debug, PartialEq, Eq)]
 pub enum RuleBuilderError<E: PartialEq + Eq + Send + Sync> {
     /// Reserved for generic / framework-level messages.

@@ -1,27 +1,17 @@
-//! Smallest **CPU-only** demo: one struct, one string field, [`RuleBuilder`].
+//! Smallest **CPU-only** demo: one struct, one string field, [`par_validator::Rule`].
 //! No GPU — works on any machine with Rust alone.
 //!
 //! Run: `cargo run --example basics`
 
 use key_paths_derive::Kp;
-use par_validator::{RuleBuilder, RuleBuilderError};
+use par_validator::Rule;
 
-type StrErr = RuleBuilderError<String>;
-
-fn not_empty(r: Option<&String>) -> StrErr {
-    match r {
-        None => StrErr::Fail("reference is missing".into()),
-        Some(s) if s.trim().is_empty() => StrErr::Fail("reference is blank".into()),
-        Some(_) => StrErr::Success,
-    }
+fn not_empty_ok(r: Option<&String>) -> bool {
+    r.map(|s| !s.trim().is_empty()).unwrap_or(false)
 }
 
-fn max_len_16(r: Option<&String>) -> StrErr {
-    match r {
-        None => StrErr::Fail("missing".into()),
-        Some(s) if s.len() > 16 => StrErr::Fail(format!("reference too long: {} chars", s.len())),
-        Some(_) => StrErr::Success,
-    }
+fn max_len_16_ok(r: Option<&String>) -> bool {
+    r.map(|s| s.len() <= 16).unwrap_or(false)
 }
 
 #[derive(Kp)]
@@ -39,10 +29,10 @@ fn main() {
     };
 
     for (label, p) in [("valid", &ok), ("invalid length", &bad)] {
-        let out = RuleBuilder::<Payment, String, String>::new(Payment::reference())
+        let out = Rule::<Payment, String, String>::new(Payment::reference())
             .with_root(p)
-            .mandatory_rule(not_empty)
-            .rule(max_len_16)
+            .mandatory_rule(not_empty_ok, "reference is missing or blank".into())
+            .rule(max_len_16_ok, "reference too long (max 16 chars)".into())
             .apply();
 
         println!("{label}: {out:?}");

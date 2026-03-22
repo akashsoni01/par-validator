@@ -2,12 +2,10 @@
 //! numerics** (GPU / wgpu).
 //!
 //! ## String rules
-//! Primary API: [`RuleBuilder`] with [`RuleBuilderError`]-returning rule functions and key paths
-//! from [`rust_key_paths`] (typically via `key-paths-derive`). For **bool predicates** paired with
-//! a fixed error value per rule, see [`builder::Rule`].
-//!
-//! Mandatory rules run **sequentially** and short-circuit on the first failure; remaining rules run
-//! in parallel with Rayon inside [`RuleBuilder::apply`].
+//! Use [`Rule`](crate::builder::Rule) from [`builder`] with **`bool` predicates** and a paired
+//! error value `E` per rule (see [`builder::Rule::mandatory_rule`] / [`builder::Rule::rule`]).
+//! Mandatory rules run **sequentially** and short-circuit; remaining rules run in parallel with
+//! Rayon inside [`Rule::apply`](crate::builder::Rule::apply).
 //!
 //! ## Numeric rules
 //! See [`gpu_numeric`] for [`GpuNumericEngine`](gpu_numeric::GpuNumericEngine), which batches
@@ -20,13 +18,9 @@
 //! - `cargo run --example fintech_rayon_nested` — large nested batch, CPU only  
 //! - `cargo run --example fintech_gpu_batch` — large numeric batch, GPU only  
 //! - `cargo run --example fintech_hybrid_batch` — both layers on a trade batch  
+//! - `cargo run --example rule_csv_catalog` — [`builder::Rule`] + CSV catalog  
 
 #![forbid(unsafe_code)]
-
-use std::fmt::Debug;
-
-use rayon::prelude::*;
-use rust_key_paths::{AccessorTrait, KpType};
 
 pub mod builder;
 pub mod errors;
@@ -34,69 +28,3 @@ pub mod gpu_numeric;
 
 pub use builder::Rule;
 pub use errors::RuleBuilderError;
-
-/// Fluent wrapper around a [`KpType`] (key path) and a set of validation functions.
-///
-/// `R` is the **root** type you pass to [`RuleBuilder::with_root`]; `V` is the **value** type at
-/// the end of the path (often `String`). `E` is your error payload (e.g. `String`).
-///
-/// Rule functions must be `fn` pointers (not closures that capture state) so they can be stored
-/// in a [`Vec`] and shared across Rayon threads.
-///
-/// For the alternative **bool predicate + error value** style, see [`Rule`].
-pub struct RuleBuilder<'a, R, V, E: PartialEq + Eq + Send + Sync> {
-    root:            Option<&'a R>,
-    kp:              KpType<'a, R, V>,
-    mandatory_rules: Vec<fn(Option<&'a V>) -> RuleBuilderError<E>>,
-    rules:           Vec<fn(Option<&'a V>) -> RuleBuilderError<E>>,
-}
-
-impl<'a, R, V, E> RuleBuilder<'a, R, V, E>
-where
-    E: Debug + Clone + 'static + PartialEq + Eq + Send + Sync,
-    R: Sync,
-    V: Sync,
-{
-    /// Starts a builder for the given statically dispatched key path (`#[derive(Kp)]` fields).
-    pub fn new(kp: KpType<'a, R, V>) -> Self {
-        Self {
-            root: None,
-            kp,
-            rules: vec![],
-            mandatory_rules: vec![],
-        }
-    }
-
-    /// Supply the struct instance `root` that the key path reads from.
-    pub fn with_root(mut self, root: &'a R) -> Self {
-        self.root = Some(root);
-        self
-    }
-
-    /// Append a rule executed **in parallel** with other non-mandatory rules when you call
-    /// [`apply`](Self::apply).
-    pub fn rule(mut self, f: fn(Option<&'a V>) -> RuleBuilderError<E>) -> Self {
-        self.rules.push(f);
-        self
-    }
-
-    /// Rule that runs **before** parallel rules, in order. On the first non-[`Success`](RuleBuilderError::Success),
-    /// [`apply`](Self::apply) returns immediately with that single outcome.
-    pub fn mandatory_rule(mut self, f: fn(Option<&'a V>) -> RuleBuilderError<E>) -> Self {
-        self.mandatory_rules.push(f);
-        self
-    }
-
-    /// Resolves `Option<&V>` via the key path, runs mandatory rules, then runs remaining rules on
-    /// a Rayon thread pool.
-    pub fn apply(&self) -> Vec<RuleBuilderError<E>> {
-        let val = self.kp.get_optional(self.root);
-        for rule in self.mandatory_rules.iter() {
-            let result = rule(val);
-            if RuleBuilderError::Success != result {
-                return vec![result];
-            }
-        }
-        self.rules.par_iter().map(|f| f(val)).collect()
-    }
-}

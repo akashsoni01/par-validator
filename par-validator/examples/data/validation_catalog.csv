@@ -1,0 +1,5 @@
+table,field,rule_kind,rule_id,error_code
+Payment,reference,mandatory,non_blank,E_PAY_REF_BLANK
+Payment,reference,parallel,max_len_16,E_PAY_REF_LEN
+Payment,currency,mandatory,non_blank,E_PAY_CCY_BLANK
+Payment,currency,parallel,alpha_upper,E_PAY_CCY_ALPHA

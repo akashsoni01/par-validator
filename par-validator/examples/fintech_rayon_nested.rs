@@ -1,126 +1,72 @@
 //! **CPU / Rayon** — validate thousands of nested ISO-20022–style credit transfers.
 //!
 //! The domain model is **nested** (`BankParty` inside `CreditTransfer`, charges, reporting,
-//! FX metadata). For [`RuleBuilder`] we use a **flat key-path view** (`CreditTransferFlat`)
-//! derived from each nested value: `rust-key-paths`’ [`KpType`] (used by this crate) only covers
-//! `derive(Kp)` fields; composed `.then()` paths use a different internal representation. Flattening
-//! is a common pattern before static validation.
+//! FX metadata). For validation we use a **flat key-path view** (`CreditTransferFlat`) with
+//! [`par_validator::Rule`] (`bool` predicates + error strings).
 //!
-//! Parallelism: Rayon over the batch, and each [`RuleBuilder::apply`] parallelizes non-mandatory
-//! rules internally.
+//! Parallelism: Rayon over the batch, and each [`Rule::apply`] parallelizes non-mandatory rules.
 //!
 //! Run: `cargo run --release --example fintech_rayon_nested`
 
 use key_paths_derive::Kp;
-use par_validator::{RuleBuilder, RuleBuilderError};
+use par_validator::Rule;
 use rayon::prelude::*;
 
-type StrErr = RuleBuilderError<String>;
-
-fn non_blank(r: Option<&String>) -> StrErr {
-    if r.map_or(true, |s| s.trim().is_empty()) {
-        StrErr::Fail("must not be blank".into())
-    } else {
-        StrErr::Success
-    }
+fn non_blank_ok(r: Option<&String>) -> bool {
+    !r.map_or(true, |s| s.trim().is_empty())
 }
 
-fn max_len_35(r: Option<&String>) -> StrErr {
-    match r {
-        None => StrErr::Fail("missing".into()),
-        Some(s) if s.len() > 35 => StrErr::Fail(format!("len {} > 35", s.len())),
-        Some(_) => StrErr::Success,
-    }
+fn max_len_35_ok(r: Option<&String>) -> bool {
+    r.map(|s| s.len() <= 35).unwrap_or(false)
 }
 
-fn max_len_10(r: Option<&String>) -> StrErr {
-    match r {
-        None => StrErr::Fail("missing".into()),
-        Some(s) if s.len() > 10 => StrErr::Fail(format!("len {} > 10", s.len())),
-        Some(_) => StrErr::Success,
-    }
+fn max_len_10_ok(r: Option<&String>) -> bool {
+    r.map(|s| s.len() <= 10).unwrap_or(false)
 }
 
-fn max_len_16(r: Option<&String>) -> StrErr {
-    match r {
-        None => StrErr::Fail("missing".into()),
-        Some(s) if s.len() > 16 => StrErr::Fail(format!("len {} > 16", s.len())),
-        Some(_) => StrErr::Success,
-    }
+fn max_len_16_ok(r: Option<&String>) -> bool {
+    r.map(|s| s.len() <= 16).unwrap_or(false)
 }
 
-fn max_len_20(r: Option<&String>) -> StrErr {
-    match r {
-        None => StrErr::Fail("missing".into()),
-        Some(s) if s.len() > 20 => StrErr::Fail(format!("len {} > 20", s.len())),
-        Some(_) => StrErr::Success,
-    }
+fn max_len_20_ok(r: Option<&String>) -> bool {
+    r.map(|s| s.len() <= 20).unwrap_or(false)
 }
 
-fn bic11(r: Option<&String>) -> StrErr {
+fn bic11_ok(r: Option<&String>) -> bool {
     match r {
-        None => StrErr::Fail("BIC missing".into()),
+        None => false,
         Some(s) => {
             let t = s.trim();
-            if t.len() != 11 {
-                StrErr::Fail(format!("BIC must be 11 chars, got {}", t.len()))
-            } else if !t.chars().take(8).all(|c| c.is_ascii_alphanumeric())
-                || !t.chars().skip(8).take(3).all(|c| c.is_ascii_alphanumeric())
-            {
-                StrErr::Fail("BIC must be alphanumeric".into())
-            } else {
-                StrErr::Success
-            }
+            t.len() == 11
+                && t.chars().take(8).all(|c| c.is_ascii_alphanumeric())
+                && t.chars().skip(8).take(3).all(|c| c.is_ascii_alphanumeric())
         },
     }
 }
 
-fn iban_like(r: Option<&String>) -> StrErr {
+fn iban_like_ok(r: Option<&String>) -> bool {
     match r {
-        None => StrErr::Fail("IBAN missing".into()),
+        None => false,
         Some(s) => {
             let t: String = s.chars().filter(|c| !c.is_whitespace()).collect();
-            let n = t.len();
-            if !(15..=34).contains(&n) {
-                StrErr::Fail(format!("IBAN length {n} not in 15..=34"))
-            } else if !t.chars().all(|c| c.is_ascii_alphanumeric()) {
-                StrErr::Fail("IBAN must be alphanumeric".into())
-            } else {
-                StrErr::Success
-            }
+            (15..=34).contains(&t.len()) && t.chars().all(|c| c.is_ascii_alphanumeric())
         },
     }
 }
 
-fn uetr_shape(r: Option<&String>) -> StrErr {
-    match r {
-        None => StrErr::Fail("UETR missing".into()),
-        Some(s) => {
-            let t = s.trim();
-            if t.len() != 36 {
-                StrErr::Fail(format!("UETR must be 36 chars (UUID), got {}", t.len()))
-            } else {
-                StrErr::Success
-            }
-        },
-    }
+fn uetr_shape_ok(r: Option<&String>) -> bool {
+    r.map(|s| s.trim().len() == 36).unwrap_or(false)
 }
 
-fn charge_code(r: Option<&String>) -> StrErr {
+fn charge_code_ok(r: Option<&String>) -> bool {
     match r {
-        None => StrErr::Fail("charge bearer missing".into()),
+        None => false,
         Some(s) => {
             let u = s.to_ascii_uppercase();
-            if matches!(u.as_str(), "DEBT" | "CRED" | "SHAR" | "SLEV") {
-                StrErr::Success
-            } else {
-                StrErr::Fail(format!("invalid charge bearer '{s}'"))
-            }
+            matches!(u.as_str(), "DEBT" | "CRED" | "SHAR" | "SLEV")
         },
     }
 }
-
-// ── Nested domain payload (not `Kp` — mirrors ISO 20022 grouping) ───────────
 
 #[derive(Clone)]
 struct BankParty {
@@ -137,7 +83,6 @@ struct RegulatoryReporting {
 #[derive(Clone)]
 struct FxLegDetails {
     contract_id: String,
-    /// Carried for realism; numeric checks run in GPU examples.
     #[allow(dead_code)]
     rate_scaled: f64,
     #[allow(dead_code)]
@@ -161,10 +106,9 @@ struct CreditTransferNested {
     fx:               FxLegDetails,
 }
 
-/// Flat projection used with `#[derive(Kp)]` and [`RuleBuilder`].
 #[derive(Kp, Clone)]
 struct CreditTransferFlat {
-    instruction_id:   String,
+    instruction_id: String,
     uetr:             String,
     value_date:       String,
     debtor_bic11:     String,
@@ -245,56 +189,56 @@ fn synthetic_transfer(idx: usize) -> CreditTransferNested {
 
 fn flat_builders<'a>(
     f: &'a CreditTransferFlat,
-) -> Vec<RuleBuilder<'a, CreditTransferFlat, String, String>> {
+) -> Vec<Rule<'a, CreditTransferFlat, String, String>> {
     vec![
-        RuleBuilder::new(CreditTransferFlat::instruction_id())
+        Rule::new(CreditTransferFlat::instruction_id())
             .with_root(f)
-            .mandatory_rule(non_blank)
-            .rule(max_len_35),
-        RuleBuilder::new(CreditTransferFlat::uetr())
+            .mandatory_rule(non_blank_ok, "instruction_id: blank".into())
+            .rule(max_len_35_ok, "instruction_id: max_len_35".into()),
+        Rule::new(CreditTransferFlat::uetr())
             .with_root(f)
-            .mandatory_rule(non_blank)
-            .rule(uetr_shape),
-        RuleBuilder::new(CreditTransferFlat::value_date())
+            .mandatory_rule(non_blank_ok, "uetr: blank".into())
+            .rule(uetr_shape_ok, "uetr: shape".into()),
+        Rule::new(CreditTransferFlat::value_date())
             .with_root(f)
-            .mandatory_rule(non_blank)
-            .rule(max_len_10),
-        RuleBuilder::new(CreditTransferFlat::debtor_bic11())
+            .mandatory_rule(non_blank_ok, "value_date: blank".into())
+            .rule(max_len_10_ok, "value_date: max_len_10".into()),
+        Rule::new(CreditTransferFlat::debtor_bic11())
             .with_root(f)
-            .mandatory_rule(non_blank)
-            .rule(bic11),
-        RuleBuilder::new(CreditTransferFlat::debtor_iban())
+            .mandatory_rule(non_blank_ok, "debtor_bic11: blank".into())
+            .rule(bic11_ok, "debtor_bic11: bic11".into()),
+        Rule::new(CreditTransferFlat::debtor_iban())
             .with_root(f)
-            .mandatory_rule(non_blank)
-            .rule(iban_like),
-        RuleBuilder::new(CreditTransferFlat::debtor_lei())
+            .mandatory_rule(non_blank_ok, "debtor_iban: blank".into())
+            .rule(iban_like_ok, "debtor_iban: iban".into()),
+        Rule::new(CreditTransferFlat::debtor_lei())
             .with_root(f)
-            .mandatory_rule(non_blank)
-            .rule(max_len_20),
-        RuleBuilder::new(CreditTransferFlat::creditor_bic11())
+            .mandatory_rule(non_blank_ok, "debtor_lei: blank".into())
+            .rule(max_len_20_ok, "debtor_lei: max_len_20".into()),
+        Rule::new(CreditTransferFlat::creditor_bic11())
             .with_root(f)
-            .mandatory_rule(non_blank)
-            .rule(bic11),
-        RuleBuilder::new(CreditTransferFlat::creditor_iban())
+            .mandatory_rule(non_blank_ok, "creditor_bic11: blank".into())
+            .rule(bic11_ok, "creditor_bic11: bic11".into()),
+        Rule::new(CreditTransferFlat::creditor_iban())
             .with_root(f)
-            .mandatory_rule(non_blank)
-            .rule(iban_like),
-        RuleBuilder::new(CreditTransferFlat::creditor_lei())
+            .mandatory_rule(non_blank_ok, "creditor_iban: blank".into())
+            .rule(iban_like_ok, "creditor_iban: iban".into()),
+        Rule::new(CreditTransferFlat::creditor_lei())
             .with_root(f)
-            .mandatory_rule(non_blank)
-            .rule(max_len_20),
-        RuleBuilder::new(CreditTransferFlat::charge_code())
+            .mandatory_rule(non_blank_ok, "creditor_lei: blank".into())
+            .rule(max_len_20_ok, "creditor_lei: max_len_20".into()),
+        Rule::new(CreditTransferFlat::charge_code())
             .with_root(f)
-            .mandatory_rule(non_blank)
-            .rule(charge_code),
-        RuleBuilder::new(CreditTransferFlat::rtrn())
+            .mandatory_rule(non_blank_ok, "charge_code: blank".into())
+            .rule(charge_code_ok, "charge_code: invalid".into()),
+        Rule::new(CreditTransferFlat::rtrn())
             .with_root(f)
-            .mandatory_rule(non_blank)
-            .rule(max_len_35),
-        RuleBuilder::new(CreditTransferFlat::fx_contract_id())
+            .mandatory_rule(non_blank_ok, "rtrn: blank".into())
+            .rule(max_len_35_ok, "rtrn: max_len_35".into()),
+        Rule::new(CreditTransferFlat::fx_contract_id())
             .with_root(f)
-            .mandatory_rule(non_blank)
-            .rule(max_len_16),
+            .mandatory_rule(non_blank_ok, "fx_contract_id: blank".into())
+            .rule(max_len_16_ok, "fx_contract_id: max_len_16".into()),
     ]
 }
 
@@ -305,10 +249,10 @@ fn main() {
         transfers:     (0..N).map(synthetic_transfer).collect(),
     };
 
-    println!("Rayon validation of {N} nested credit transfers (flattened to key paths, 12 builders each)…\n");
+    println!("Rayon validation of {N} nested credit transfers (flattened to key paths, 12 Rules each)…\n");
 
     let t0 = std::time::Instant::now();
-    let errors: Vec<StrErr> = batch
+    let failures: Vec<String> = batch
         .transfers
         .par_iter()
         .flat_map_iter(|ct| {
@@ -321,14 +265,12 @@ fn main() {
         .collect();
     let elapsed = t0.elapsed();
 
-    let fails = errors.iter().filter(|e| **e != StrErr::Success).count();
     println!("Finished in {elapsed:?}");
-    println!("Total rule outcomes: {}", errors.len());
-    println!("Failures: {fails}");
-    println!("Successes: {}", errors.len() - fails);
+    println!("Total failure messages: {}", failures.len());
+    println!("(Each message is one failed predicate; empty means all checks passed for that path.)");
 
     println!("\nSample failure messages:");
-    for e in errors.iter().filter(|e| **e != StrErr::Success).take(8) {
-        println!("  {e:?}");
+    for msg in failures.iter().take(8) {
+        println!("  {msg}");
     }
 }
