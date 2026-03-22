@@ -136,14 +136,23 @@ cd par-validator
 cargo bench --bench throughput
 ```
 
+Run **only** the large GPU case (handy on a Windows/Linux **NVIDIA** box with Vulkan or DX12):
+
+```bash
+cargo bench --bench throughput -- nvidia_gpu
+```
+
 ### Results (reference machine)
 
-| Benchmark | What it measures | Typical time |
-|-----------|------------------|--------------|
-| `rayon_cpu_4096_transfers_x12_builders` | 4 096 flat transfers × 12 [`RuleBuilder`] runs (Rayon over rows + inner `par_iter` in `apply`) | **~2.86 ms** |
+| Benchmark | What it measures | Typical time (M1 Air) |
+|-----------|------------------|------------------------|
+| `rayon_cpu_4096_transfers_x12_builders` | 4 096 flat transfers × 12 `RuleBuilder` runs (Rayon over rows + inner `par_iter` in `apply`) | **~2.86 ms** |
 | `wgpu_gpu/12288_numeric_rules_one_dispatch` | 12 288 `NumericRule` rows in one `GpuNumericEngine::run` | **~1.53 ms** |
+| `wgpu_gpu_nvidia/nvidia_gpu_98304_numeric_rules_one_dispatch` | **98 304** rules (16 384 legs × 6), one dispatch — **stress size for discrete GPUs** | **~3.44 ms** |
 
 **Testing machine:** MacBook Air **M1**, Apple Silicon (**arm64**), macOS, Rust **1.85**, `cargo bench` release profile. Figures are Criterion medians from a single run; variance and outliers are normal—re-run locally for your hardware.
+
+**NVIDIA:** On a PC with an NVIDIA GPU, install current drivers, use the same `cargo bench --bench throughput -- nvidia_gpu` command, and compare the reported time to the M1 row above (wgpu will typically use **Vulkan** or **DX12**).
 
 ---
 

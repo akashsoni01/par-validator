@@ -1,6 +1,10 @@
 //! Criterion throughput benches (CPU Rayon + GPU numeric batch).
 //!
 //! Run: `cargo bench --bench throughput`
+//!
+//! Extra **large GPU** benchmark (`nvidia_gpu_*`): **98 304** rules in one dispatch — useful when
+//! you re-run benches on an **NVIDIA** machine (Vulkan/DX12) and compare to Apple Metal.
+//! Filter with Criterion’s substring match, e.g. `cargo bench --bench throughput -- nvidia_gpu`.
 // cd par-validator && cargo bench --bench throughput
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
@@ -280,5 +284,29 @@ fn bench_gpu_numeric_12k(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_rayon_fintech_4k, bench_gpu_numeric_12k);
+/// Larger batch for **NVIDIA** (or any discrete GPU) throughput comparison — same rule mix, more rows.
+const NVIDIA_STRESS_LEGS: usize = 16_384;
+
+fn bench_gpu_numeric_nvidia_large(c: &mut Criterion) {
+    let rules = build_gpu_rules(NVIDIA_STRESS_LEGS);
+    assert_eq!(rules.len(), NVIDIA_STRESS_LEGS * 6);
+
+    let engine = pollster::block_on(GpuNumericEngine::new());
+
+    let mut group = c.benchmark_group("wgpu_gpu_nvidia");
+    group.sample_size(15);
+    group.measurement_time(std::time::Duration::from_secs(5));
+    group.bench_function(
+        "nvidia_gpu_98304_numeric_rules_one_dispatch",
+        |b| b.iter(|| engine.run(black_box(rules.as_slice()))),
+    );
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_rayon_fintech_4k,
+    bench_gpu_numeric_12k,
+    bench_gpu_numeric_nvidia_large
+);
 criterion_main!(benches);
