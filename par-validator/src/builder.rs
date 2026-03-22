@@ -6,6 +6,10 @@
 //!
 //! For loading rule **metadata** (which field, which predicate, error code) from a CSV catalog, see
 //! the `rule_csv_catalog` example and `examples/data/validation_catalog.csv` in the crate source.
+//!
+//! # Minimal runnable example
+//!
+//! From the crate directory: `cargo run --example basics` — see `examples/basics.rs`.
 
 use std::fmt::Debug;
 

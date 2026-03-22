@@ -8,24 +8,17 @@
 
 use key_paths_derive::Kp;
 use par_validator::gpu_numeric::{GpuErrorCode, GpuNumericEngine, NumericRule, NumericRuleKind};
-use par_validator::{RuleBuilder, RuleBuilderError};
+use par_validator::Rule;
 use rayon::prelude::*;
 
-type StrErr = RuleBuilderError<String>;
-
-fn non_blank(r: Option<&String>) -> StrErr {
-    if r.map_or(true, |s| s.trim().is_empty()) {
-        StrErr::Fail("blank".into())
-    } else {
-        StrErr::Success
-    }
+fn non_blank_ok(r: Option<&String>) -> bool {
+    r.map(|s| !s.trim().is_empty()).unwrap_or(false)
 }
 
-fn alnum_id(r: Option<&String>) -> StrErr {
+fn alnum_id_ok(r: Option<&String>) -> bool {
     match r {
-        None => StrErr::Fail("missing id".into()),
-        Some(s) if s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') => StrErr::Success,
-        Some(_) => StrErr::Fail("id must be alphanumeric / hyphen".into()),
+        None => false,
+        Some(s) => s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'),
     }
 }
 
@@ -48,16 +41,16 @@ fn to_fixed(v: f64) -> i32 {
     (v * 100.0).round() as i32
 }
 
-fn string_builders<'a>(t: &'a TradeLeg) -> Vec<RuleBuilder<'a, TradeLeg, String, String>> {
+fn string_rules<'a>(t: &'a TradeLeg) -> Vec<Rule<'a, TradeLeg, String, String>> {
     vec![
-        RuleBuilder::new(TradeLeg::client_ref())
+        Rule::new(TradeLeg::client_ref())
             .with_root(t)
-            .mandatory_rule(non_blank)
-            .rule(alnum_id),
-        RuleBuilder::new(TradeLeg::product_code())
+            .mandatory_rule(non_blank_ok, "blank".into())
+            .rule(alnum_id_ok, "id must be alphanumeric / hyphen".into()),
+        Rule::new(TradeLeg::product_code())
             .with_root(t)
-            .mandatory_rule(non_blank)
-            .rule(alnum_id),
+            .mandatory_rule(non_blank_ok, "blank".into())
+            .rule(alnum_id_ok, "id must be alphanumeric / hyphen".into()),
     ]
 }
 
@@ -117,15 +110,14 @@ fn main() {
                 .collect(),
         };
 
-        println!("=== Rayon: {N} legs × string builders ===\n");
+        println!("=== Rayon: {N} legs × string rules ===\n");
         let t_strings = std::time::Instant::now();
-        let str_errors: Vec<StrErr> = batch
+        let str_errors: Vec<String> = batch
             .legs
             .par_iter()
-            .flat_map_iter(|leg| string_builders(leg).into_iter().flat_map(|b| b.apply()))
+            .flat_map_iter(|leg| string_rules(leg).into_iter().flat_map(|b| b.apply()))
             .collect();
-        let str_fail = str_errors.iter().filter(|e| **e != StrErr::Success).count();
-        println!("String checks in {:?}: {} failures", t_strings.elapsed(), str_fail);
+        println!("String checks in {:?}: {} failures", t_strings.elapsed(), str_errors.len());
 
         println!("\n=== GPU: one batch for all numeric rules ===\n");
         let mut all_numeric: Vec<NumericRule> = Vec::with_capacity(N * 5);

@@ -1,6 +1,6 @@
 [package]
 name = "par-validator"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "A truely parallel field validator engine written on top of ryon, wgpu and rust-key-paths."
 readme = "../README.md"

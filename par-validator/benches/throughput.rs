@@ -10,101 +10,59 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use key_paths_derive::Kp;
 use par_validator::gpu_numeric::{GpuNumericEngine, NumericRule, NumericRuleKind};
-use par_validator::{RuleBuilder, RuleBuilderError};
+use par_validator::Rule;
 use rayon::prelude::*;
 
-type StrErr = RuleBuilderError<String>;
-
-fn non_blank(r: Option<&String>) -> StrErr {
-    if r.map_or(true, |s| s.trim().is_empty()) {
-        StrErr::Fail("blank".into())
-    } else {
-        StrErr::Success
-    }
+fn non_blank(r: Option<&String>) -> bool {
+    r.map(|s| !s.trim().is_empty()).unwrap_or(false)
 }
 
-fn max_len_35(r: Option<&String>) -> StrErr {
-    match r {
-        None => StrErr::Fail("missing".into()),
-        Some(s) if s.len() > 35 => StrErr::Fail("long".into()),
-        Some(_) => StrErr::Success,
-    }
+fn max_len_35(r: Option<&String>) -> bool {
+    r.map(|s| s.len() <= 35).unwrap_or(false)
 }
 
-fn max_len_10(r: Option<&String>) -> StrErr {
-    match r {
-        None => StrErr::Fail("missing".into()),
-        Some(s) if s.len() > 10 => StrErr::Fail("long".into()),
-        Some(_) => StrErr::Success,
-    }
+fn max_len_10(r: Option<&String>) -> bool {
+    r.map(|s| s.len() <= 10).unwrap_or(false)
 }
 
-fn max_len_16(r: Option<&String>) -> StrErr {
-    match r {
-        None => StrErr::Fail("missing".into()),
-        Some(s) if s.len() > 16 => StrErr::Fail("long".into()),
-        Some(_) => StrErr::Success,
-    }
+fn max_len_16(r: Option<&String>) -> bool {
+    r.map(|s| s.len() <= 16).unwrap_or(false)
 }
 
-fn max_len_20(r: Option<&String>) -> StrErr {
-    match r {
-        None => StrErr::Fail("missing".into()),
-        Some(s) if s.len() > 20 => StrErr::Fail("long".into()),
-        Some(_) => StrErr::Success,
-    }
+fn max_len_20(r: Option<&String>) -> bool {
+    r.map(|s| s.len() <= 20).unwrap_or(false)
 }
 
-fn bic11(r: Option<&String>) -> StrErr {
+fn bic11(r: Option<&String>) -> bool {
     match r {
-        None => StrErr::Fail("missing".into()),
+        None => false,
         Some(s) => {
             let t = s.trim();
-            if t.len() != 11 {
-                StrErr::Fail("bic len".into())
-            } else if !t.chars().all(|c| c.is_ascii_alphanumeric()) {
-                StrErr::Fail("bic charset".into())
-            } else {
-                StrErr::Success
-            }
+            t.len() == 11 && t.chars().all(|c| c.is_ascii_alphanumeric())
         },
     }
 }
 
-fn iban_like(r: Option<&String>) -> StrErr {
+fn iban_like(r: Option<&String>) -> bool {
     match r {
-        None => StrErr::Fail("missing".into()),
+        None => false,
         Some(s) => {
             let t: String = s.chars().filter(|c| !c.is_whitespace()).collect();
-            if !(15..=34).contains(&t.len()) {
-                StrErr::Fail("iban len".into())
-            } else if !t.chars().all(|c| c.is_ascii_alphanumeric()) {
-                StrErr::Fail("iban charset".into())
-            } else {
-                StrErr::Success
-            }
+            (15..=34).contains(&t.len()) && t.chars().all(|c| c.is_ascii_alphanumeric())
         },
     }
 }
 
-fn uetr_shape(r: Option<&String>) -> StrErr {
-    match r {
-        None => StrErr::Fail("missing".into()),
-        Some(s) if s.trim().len() != 36 => StrErr::Fail("uetr len".into()),
-        Some(_) => StrErr::Success,
-    }
+fn uetr_shape(r: Option<&String>) -> bool {
+    r.map(|s| s.trim().len() == 36).unwrap_or(false)
 }
 
-fn charge_code(r: Option<&String>) -> StrErr {
+fn charge_code(r: Option<&String>) -> bool {
     match r {
-        None => StrErr::Fail("missing".into()),
+        None => false,
         Some(s) => {
             let u = s.to_ascii_uppercase();
-            if matches!(u.as_str(), "DEBT" | "CRED" | "SHAR" | "SLEV") {
-                StrErr::Success
-            } else {
-                StrErr::Fail("charge".into())
-            }
+            matches!(u.as_str(), "DEBT" | "CRED" | "SHAR" | "SLEV")
         },
     }
 }
@@ -143,68 +101,63 @@ fn synthetic_flat(idx: usize) -> CreditTransferFlat {
     }
 }
 
-fn flat_builders<'a>(f: &'a CreditTransferFlat) -> Vec<RuleBuilder<'a, CreditTransferFlat, String, String>> {
+fn flat_rules<'a>(f: &'a CreditTransferFlat) -> Vec<Rule<'a, CreditTransferFlat, String, String>> {
     vec![
-        RuleBuilder::new(CreditTransferFlat::instruction_id())
+        Rule::new(CreditTransferFlat::instruction_id())
             .with_root(f)
-            .mandatory_rule(non_blank)
-            .rule(max_len_35),
-        RuleBuilder::new(CreditTransferFlat::uetr())
+            .mandatory_rule(non_blank, "blank".into())
+            .rule(max_len_35, "long".into()),
+        Rule::new(CreditTransferFlat::uetr())
             .with_root(f)
-            .mandatory_rule(non_blank)
-            .rule(uetr_shape),
-        RuleBuilder::new(CreditTransferFlat::value_date())
+            .mandatory_rule(non_blank, "blank".into())
+            .rule(uetr_shape, "uetr len".into()),
+        Rule::new(CreditTransferFlat::value_date())
             .with_root(f)
-            .mandatory_rule(non_blank)
-            .rule(max_len_10),
-        RuleBuilder::new(CreditTransferFlat::debtor_bic11())
+            .mandatory_rule(non_blank, "blank".into())
+            .rule(max_len_10, "long".into()),
+        Rule::new(CreditTransferFlat::debtor_bic11())
             .with_root(f)
-            .mandatory_rule(non_blank)
-            .rule(bic11),
-        RuleBuilder::new(CreditTransferFlat::debtor_iban())
+            .mandatory_rule(non_blank, "blank".into())
+            .rule(bic11, "bic".into()),
+        Rule::new(CreditTransferFlat::debtor_iban())
             .with_root(f)
-            .mandatory_rule(non_blank)
-            .rule(iban_like),
-        RuleBuilder::new(CreditTransferFlat::debtor_lei())
+            .mandatory_rule(non_blank, "blank".into())
+            .rule(iban_like, "iban".into()),
+        Rule::new(CreditTransferFlat::debtor_lei())
             .with_root(f)
-            .mandatory_rule(non_blank)
-            .rule(max_len_20),
-        RuleBuilder::new(CreditTransferFlat::creditor_bic11())
+            .mandatory_rule(non_blank, "blank".into())
+            .rule(max_len_20, "long".into()),
+        Rule::new(CreditTransferFlat::creditor_bic11())
             .with_root(f)
-            .mandatory_rule(non_blank)
-            .rule(bic11),
-        RuleBuilder::new(CreditTransferFlat::creditor_iban())
+            .mandatory_rule(non_blank, "blank".into())
+            .rule(bic11, "bic".into()),
+        Rule::new(CreditTransferFlat::creditor_iban())
             .with_root(f)
-            .mandatory_rule(non_blank)
-            .rule(iban_like),
-        RuleBuilder::new(CreditTransferFlat::creditor_lei())
+            .mandatory_rule(non_blank, "blank".into())
+            .rule(iban_like, "iban".into()),
+        Rule::new(CreditTransferFlat::creditor_lei())
             .with_root(f)
-            .mandatory_rule(non_blank)
-            .rule(max_len_20),
-        RuleBuilder::new(CreditTransferFlat::charge_code())
+            .mandatory_rule(non_blank, "blank".into())
+            .rule(max_len_20, "long".into()),
+        Rule::new(CreditTransferFlat::charge_code())
             .with_root(f)
-            .mandatory_rule(non_blank)
-            .rule(charge_code),
-        RuleBuilder::new(CreditTransferFlat::rtrn())
+            .mandatory_rule(non_blank, "blank".into())
+            .rule(charge_code, "charge".into()),
+        Rule::new(CreditTransferFlat::rtrn())
             .with_root(f)
-            .mandatory_rule(non_blank)
-            .rule(max_len_35),
-        RuleBuilder::new(CreditTransferFlat::fx_contract_id())
+            .mandatory_rule(non_blank, "blank".into())
+            .rule(max_len_35, "long".into()),
+        Rule::new(CreditTransferFlat::fx_contract_id())
             .with_root(f)
-            .mandatory_rule(non_blank)
-            .rule(max_len_16),
+            .mandatory_rule(non_blank, "blank".into())
+            .rule(max_len_16, "long".into()),
     ]
 }
 
 fn run_rayon_batch(rows: &[CreditTransferFlat]) {
-    let _: Vec<StrErr> = rows
+    let _: Vec<String> = rows
         .par_iter()
-        .flat_map_iter(|row| {
-            flat_builders(row)
-                .into_iter()
-                .flat_map(|b| b.apply())
-                .collect::<Vec<_>>()
-        })
+        .flat_map_iter(|row| flat_rules(row).into_iter().flat_map(|b| b.apply()))
         .collect();
 }
 
@@ -212,7 +165,7 @@ fn bench_rayon_fintech_4k(c: &mut Criterion) {
     const N: usize = 4096;
     let rows: Vec<CreditTransferFlat> = (0..N).map(synthetic_flat).collect();
 
-    c.bench_function("rayon_cpu_4096_transfers_x12_builders", |b| {
+    c.bench_function("rayon_cpu_4096_transfers_x12_rules", |b| {
         b.iter(|| run_rayon_batch(black_box(rows.as_slice())))
     });
 }

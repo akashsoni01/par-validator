@@ -1,10 +1,12 @@
-//! Smallest **CPU-only** demo: one struct, one string field, [`par_validator::Rule`].
+//! Smallest **CPU-only** demo for [`Rule`](par_validator::builder::Rule) in the
+//! [`builder`](par_validator::builder) module (`src/builder.rs`): one `#[derive(Kp)]` struct, one
+//! string field, mandatory + parallel predicates.
 //! No GPU — works on any machine with Rust alone.
 //!
 //! Run: `cargo run --example basics`
 
 use key_paths_derive::Kp;
-use par_validator::Rule;
+use par_validator::builder::Rule;
 
 fn not_empty_ok(r: Option<&String>) -> bool {
     r.map(|s| !s.trim().is_empty()).unwrap_or(false)

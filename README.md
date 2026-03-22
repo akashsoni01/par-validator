@@ -63,9 +63,9 @@ So: **texty things → CPU + Rayon**, **lots of fixed-point number rules → GPU
 
 | Order | File | Why |
 |-------|------|-----|
-| 1 | [`examples/basics.rs`](par-validator/examples/basics.rs) | Minimal `RuleBuilder` only (no GPU) |
-| 2 | [`examples/hybrid_gpu.rs`](par-validator/examples/hybrid_gpu.rs) | Short story: `RuleBuilder` + `GpuNumericEngine::run` |
-| 3 | [`src/lib.rs`](par-validator/src/lib.rs) | `RuleBuilder` API and docs |
+| 1 | [`examples/basics.rs`](par-validator/examples/basics.rs) | Minimal [`Rule`](par-validator/src/builder.rs) / `builder` only (no GPU) |
+| 2 | [`examples/hybrid_gpu.rs`](par-validator/examples/hybrid_gpu.rs) | Short story: `Rule` + `GpuNumericEngine::run` |
+| 3 | [`src/builder.rs`](par-validator/src/builder.rs) | [`Rule`](par-validator/src/builder.rs): key path + bool predicates + `apply` |
 | 4 | [`src/gpu_numeric.rs`](par-validator/src/gpu_numeric.rs) | Rules, outputs, WGSL shader |
 | 5 | [`examples/fintech_hybrid_batch.rs`](par-validator/examples/fintech_hybrid_batch.rs) | Bigger payload, both layers |
 
@@ -74,14 +74,14 @@ So: **texty things → CPU + Rayon**, **lots of fixed-point number rules → GPU
 | Term | Meaning |
 |------|---------|
 | **Key path (`Kp`)** | Compile-time accessor to a field, e.g. `MyStruct::field_name()`, from `key-paths-derive`. |
-| **`RuleBuilder`** | Holds a key path + list of rule `fn`s + optional root reference; `apply()` runs the rules. |
+| **`Rule`** | Holds a key path + mandatory / parallel `fn(Option<&V>) -> bool` rules, each with an error `E`; `apply()` returns `Vec<E>` for failures. |
 | **Mandatory rule** | Runs first, in order; first failure stops the rest of the mandatory list for that builder. |
 | **`NumericRule`** | One row: value ×100, rule kind, two integer parameters (meaning depends on kind). |
 | **`GpuNumericEngine::run`** | Uploads all rules, runs compute shader once, downloads results (blocking). |
 
 ### Flattening nested structs
 
-Your **business** model can be deeply nested (parties, legs, charges). This crate’s `RuleBuilder::new` expects a **`KpType`** from plain `#[derive(Kp)]` fields. A common pattern (see `fintech_rayon_nested`) is a **flat “view” struct** that mirrors nested data for validation only.
+Your **business** model can be deeply nested (parties, legs, charges). This crate’s [`Rule::new`](par-validator/src/builder.rs) expects a **`KpType`** from plain `#[derive(Kp)]` fields. A common pattern (see `fintech_rayon_nested`) is a **flat “view” struct** that mirrors nested data for validation only.
 
 ### If something goes wrong
 
@@ -95,11 +95,11 @@ Your **business** model can be deeply nested (parties, legs, charges). This crat
 
 | Layer | What | How |
 |--------|------|-----|
-| **Strings / IDs** | BIC-shaped data, IBAN-like lengths, UETR, product codes | `RuleBuilder` + `#[derive(Kp)]` + Rayon |
+| **Strings / IDs** | BIC-shaped data, IBAN-like lengths, UETR, product codes | [`Rule`](par-validator/src/builder.rs) + `#[derive(Kp)]` + Rayon |
 | **Numerics** | Range, %, tax in bps, FX ×1000 rate, interest | `GpuNumericEngine` + WGSL compute |
 
 - **Mandatory rules** run **in order** and **short-circuit** on the first failure.
-- **Other rules** for the same key path run **in parallel** inside `RuleBuilder::apply`.
+- **Other rules** for the same key path run **in parallel** inside [`Rule::apply`](par-validator/src/builder.rs).
 - **GPU**: all values are **i32 scaled ×100** end-to-end in the shader (no `f32`/`f64` on the boundary), avoiding nondeterministic floats in validation math.
 
 ---
@@ -115,7 +115,7 @@ cargo run --example hybrid_gpu
 
 ## Basic example (CPU only)
 
-The smallest program uses **`RuleBuilder`** on a **`#[derive(Kp)]`** struct — **no GPU**, no `async`, so it is easy to copy into your own crate.
+The smallest program uses **[`Rule`](par-validator/src/builder.rs)** on a **`#[derive(Kp)]`** struct — **no GPU**, no `async`, so it is easy to copy into your own crate.
 
 ```bash
 cargo run --example basics
@@ -125,35 +125,27 @@ Source: [`examples/basics.rs`](par-validator/examples/basics.rs). Core idea:
 
 ```rust
 use key_paths_derive::Kp;
-use par_validator::{RuleBuilder, RuleBuilderError};
+use par_validator::Rule;
 
 #[derive(Kp)]
 struct Payment {
     reference: String,
 }
 
-fn not_empty(r: Option<&String>) -> RuleBuilderError<String> {
-    match r {
-        None => RuleBuilderError::Fail("missing".into()),
-        Some(s) if s.trim().is_empty() => RuleBuilderError::Fail("blank".into()),
-        Some(_) => RuleBuilderError::Success,
-    }
+fn not_empty_ok(r: Option<&String>) -> bool {
+    r.map(|s| !s.trim().is_empty()).unwrap_or(false)
 }
 
-fn max_len_16(r: Option<&String>) -> RuleBuilderError<String> {
-    match r {
-        None => RuleBuilderError::Fail("missing".into()),
-        Some(s) if s.len() > 16 => RuleBuilderError::Fail("too long".into()),
-        Some(_) => RuleBuilderError::Success,
-    }
+fn max_len_16_ok(r: Option<&String>) -> bool {
+    r.map(|s| s.len() <= 16).unwrap_or(false)
 }
 
 let p = Payment { reference: "REF-001".into() };
 
-let results = RuleBuilder::<Payment, String, String>::new(Payment::reference())
+let results = Rule::<Payment, String, String>::new(Payment::reference())
     .with_root(&p)
-    .mandatory_rule(not_empty)
-    .rule(max_len_16)
+    .mandatory_rule(not_empty_ok, "missing or blank".into())
+    .rule(max_len_16_ok, "too long".into())
     .apply();
 ```
 
@@ -205,7 +197,7 @@ cargo bench --bench throughput -- nvidia_gpu
 
 | Benchmark | What it measures | Typical time (M1 Air) |
 |-----------|------------------|------------------------|
-| `rayon_cpu_4096_transfers_x12_builders` | 4 096 flat transfers × 12 `RuleBuilder` runs (Rayon over rows + inner `par_iter` in `apply`) | **~2.86 ms** |
+| `rayon_cpu_4096_transfers_x12_rules` | 4 096 flat transfers × 12 [`Rule`](par-validator/src/builder.rs) runs (Rayon over rows + inner `par_iter` in `apply`) | **~2.86 ms** |
 | `wgpu_gpu/12288_numeric_rules_one_dispatch` | 12 288 `NumericRule` rows in one `GpuNumericEngine::run` | **~1.53 ms** |
 | `wgpu_gpu_nvidia/nvidia_gpu_98304_numeric_rules_one_dispatch` | **98 304** rules (16 384 legs × 6), one dispatch — **stress size for discrete GPUs** | **~3.44 ms** |
 
@@ -217,7 +209,7 @@ cargo bench --bench throughput -- nvidia_gpu
 
 ## Library layout
 
-- **`RuleBuilder`** — CPU validation keyed by [`KpType`](https://docs.rs/rust-key-paths/latest/rust_key_paths/type.KpType.html).
+- **`builder::Rule`** — CPU validation keyed by [`KpType`](https://docs.rs/rust-key-paths/latest/rust_key_paths/type.KpType.html) (`pub use` as `par_validator::Rule`).
 - **`gpu_numeric`** — `NumericRule` / `NumericOutput`, `GpuNumericEngine::run`, WGSL shader (portable wide integer math for Metal).
 
 Full API docs:
