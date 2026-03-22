@@ -1,5 +1,10 @@
-//! String rules on Rayon; numeric rules on wgpu (see `gpu_numeric`).
-// cargo run --example hybrid_gpu
+//! Minimal end-to-end demo: **Rayon** for string rules, **wgpu** for fixed-point numerics.
+//!
+//! Run: `cargo run --example hybrid_gpu`
+//!
+//! See also `fintech_rayon_nested`, `fintech_gpu_batch`, and `fintech_hybrid_batch` for
+//! larger payloads.
+
 use key_paths_derive::Kp;
 use par_validator::gpu_numeric::{
     GpuErrorCode, GpuNumericEngine, NumericOutput, NumericRule, NumericRuleKind,

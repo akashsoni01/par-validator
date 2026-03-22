@@ -8,14 +8,21 @@
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
+/// Error codes returned per row from the compute shader (mirrors WGSL constants).
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GpuErrorCode {
+    /// Rule passed (calculation rows may still set [`NumericOutput::calc_value`]).
     Success        = 0,
+    /// Value outside an inclusive `[param_a, param_b]` range (scaled ×100).
     RangeError     = 1,
+    /// Failed [`NumericRuleKind::MustBePositive`].
     NotPositive    = 2,
+    /// Reserved for overflow signalling in future rule kinds.
     Overflow       = 3,
+    /// FX path with `param_a == 0` (rate ×1000).
     DivByZero      = 4,
+    /// [`NumericRuleKind::MaxPrecision`] — extra decimal places vs allowed scale.
     PrecisionError = 5,
 }
 
@@ -33,40 +40,55 @@ impl From<u32> for GpuErrorCode {
     }
 }
 
+/// Discriminant for [`NumericRule::rule_kind`] (must stay in sync with WGSL).
 #[repr(u32)]
 #[derive(Debug, Clone, Copy)]
 pub enum NumericRuleKind {
+    /// Inclusive bounds: `param_a`..=`param_b` (all ×100).
     RangeCheck     = 0,
+    /// `param_a == 0` → strict `> 0`; `param_a == 1` → `>= 0`.
     MustBePositive = 1,
+    /// `param_a` = max decimal places (0, 1, or 2) for a value already scaled ×100.
     MaxPrecision   = 2,
+    /// Writes `clamp(value, param_a, param_b)` to [`NumericOutput::calc_value`]; [`GpuErrorCode::RangeError`] if out of range.
     Clamp          = 3,
+    /// Percentage 0.00–100.00 → value in `0..=10000`.
     Percentage     = 4,
+    /// `calc = value * param_a / 10000` with `param_a` in basis points.
     TaxCalc        = 5,
+    /// `calc = value * param_a / 1000` with `param_a` = rate×1000.
     FxConvert      = 6,
-    /// `principal×100 * rate_bp * days / (365 * 10000)` → output ×100.
+    /// `principal×100 * rate_bp * days / (365 * 10000)` → [`NumericOutput::calc_value`] ×100.
     InterestCalc   = 7,
 }
 
-/// Values are integers scaled by 100 (e.g. 12.50 → 1250).
+/// One row of input for the numeric compute shader (fixed-point ×100 on the wire).
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable, Debug)]
 pub struct NumericRule {
+    /// Input scalar ×100 (e.g. `12.50` → `1250`).
     pub value:     i32,
     pub rule_kind: u32,
+    /// Meaning depends on [`NumericRuleKind`].
     pub param_a:   i32,
     pub param_b:   i32,
 }
 
-/// Layout matches WGSL `NumericOutput` (16-byte stride in storage arrays).
+/// One output row per [`NumericRule`] (16-byte stride for WGSL `storage` arrays).
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable, Debug)]
 pub struct NumericOutput {
+    /// [`GpuErrorCode`] as `u32`.
     pub error_code: u32,
+    /// Computed value ×100 for calculation rules; `0` for pure validation rows.
     pub calc_value: i32,
     _pad0:          u32,
     _pad1:          u32,
 }
 
+/// Owns a wgpu device, queue, and compiled numeric compute pipeline.
+///
+/// Create once (async), then call [`GpuNumericEngine::run`] for each batch of [`NumericRule`].
 pub struct GpuNumericEngine {
     device:   wgpu::Device,
     queue:    wgpu::Queue,
@@ -74,6 +96,11 @@ pub struct GpuNumericEngine {
 }
 
 impl GpuNumericEngine {
+    /// Requests the default adapter and builds the numeric compute pipeline.
+    ///
+    /// # Panics
+    /// Panics if no adapter or device is available (appropriate for examples; production code
+    /// should handle errors).
     pub async fn new() -> Self {
         let instance = wgpu::Instance::default();
         let adapter = instance
@@ -101,6 +128,8 @@ impl GpuNumericEngine {
         Self { device, queue, pipeline }
     }
 
+    /// Uploads `rules`, dispatches `ceil(n / 64)` workgroups, copies results back, and returns one
+    /// [`NumericOutput`] per input row (blocking until the GPU finishes).
     pub fn run(&self, rules: &[NumericRule]) -> Vec<NumericOutput> {
         if rules.is_empty() {
             return vec![];
