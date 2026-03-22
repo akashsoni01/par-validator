@@ -5,7 +5,7 @@ use crate::errors::RuleBuilderError;
 
 pub mod errors;
 
-pub struct RuleBuilder<'a, R, V, E: Clone + 'static + PartialEq + Eq> {
+pub struct RuleBuilder<'a, R, V, E: PartialEq + Eq> {
     root: Option<&'a R>,
     kp: KpType<'a, R, V>,
     mandatory_rules: Vec<fn(Option<&'a V>) -> RuleBuilderError<E>>,
