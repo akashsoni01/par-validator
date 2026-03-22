@@ -35,19 +35,25 @@ So: **texty things → CPU + Rayon**, **lots of fixed-point number rules → GPU
    cd par-validator
    ```
 
-2. Run the smallest end-to-end demo (strings on the CPU, numbers on the GPU):
+2. Optional — **smallest** sample (CPU only, no GPU):
+
+   ```bash
+   cargo run --example basics
+   ```
+
+3. Run the small end-to-end demo (strings on the CPU, numbers on the GPU):
 
    ```bash
    cargo run --example hybrid_gpu
    ```
 
-3. When that works, try a **CPU-only** large batch:
+4. When that works, try a **CPU-only** large batch:
 
    ```bash
    cargo run --release --example fintech_rayon_nested
    ```
 
-4. Then a **GPU-heavy** batch:
+5. Then a **GPU-heavy** batch:
 
    ```bash
    cargo run --release --example fintech_gpu_batch
@@ -57,10 +63,11 @@ So: **texty things → CPU + Rayon**, **lots of fixed-point number rules → GPU
 
 | Order | File | Why |
 |-------|------|-----|
-| 1 | [`examples/hybrid_gpu.rs`](par-validator/examples/hybrid_gpu.rs) | Short story: `RuleBuilder` + `GpuNumericEngine::run` |
-| 2 | [`src/lib.rs`](par-validator/src/lib.rs) | `RuleBuilder` API and docs |
-| 3 | [`src/gpu_numeric.rs`](par-validator/src/gpu_numeric.rs) | Rules, outputs, WGSL shader |
-| 4 | [`examples/fintech_hybrid_batch.rs`](par-validator/examples/fintech_hybrid_batch.rs) | Bigger payload, both layers |
+| 1 | [`examples/basics.rs`](par-validator/examples/basics.rs) | Minimal `RuleBuilder` only (no GPU) |
+| 2 | [`examples/hybrid_gpu.rs`](par-validator/examples/hybrid_gpu.rs) | Short story: `RuleBuilder` + `GpuNumericEngine::run` |
+| 3 | [`src/lib.rs`](par-validator/src/lib.rs) | `RuleBuilder` API and docs |
+| 4 | [`src/gpu_numeric.rs`](par-validator/src/gpu_numeric.rs) | Rules, outputs, WGSL shader |
+| 5 | [`examples/fintech_hybrid_batch.rs`](par-validator/examples/fintech_hybrid_batch.rs) | Bigger payload, both layers |
 
 ### Concepts cheat sheet
 
@@ -104,6 +111,57 @@ cd par-validator
 cargo run --example hybrid_gpu
 ```
 
+---
+
+## Basic example (CPU only)
+
+The smallest program uses **`RuleBuilder`** on a **`#[derive(Kp)]`** struct — **no GPU**, no `async`, so it is easy to copy into your own crate.
+
+```bash
+cargo run --example basics
+```
+
+Source: [`examples/basics.rs`](par-validator/examples/basics.rs). Core idea:
+
+```rust
+use key_paths_derive::Kp;
+use par_validator::{RuleBuilder, RuleBuilderError};
+
+#[derive(Kp)]
+struct Payment {
+    reference: String,
+}
+
+fn not_empty(r: Option<&String>) -> RuleBuilderError<String> {
+    match r {
+        None => RuleBuilderError::Fail("missing".into()),
+        Some(s) if s.trim().is_empty() => RuleBuilderError::Fail("blank".into()),
+        Some(_) => RuleBuilderError::Success,
+    }
+}
+
+fn max_len_16(r: Option<&String>) -> RuleBuilderError<String> {
+    match r {
+        None => RuleBuilderError::Fail("missing".into()),
+        Some(s) if s.len() > 16 => RuleBuilderError::Fail("too long".into()),
+        Some(_) => RuleBuilderError::Success,
+    }
+}
+
+let p = Payment { reference: "REF-001".into() };
+
+let results = RuleBuilder::<Payment, String, String>::new(Payment::reference())
+    .with_root(&p)
+    .mandatory_rule(not_empty)
+    .rule(max_len_16)
+    .apply();
+```
+
+- **`mandatory_rule`** runs first; if it fails, you get a single-element `Vec` and parallel rules are skipped.
+- **`rule`** adds checks that run **in parallel** with each other inside `apply()`.
+
+---
+
 Release builds are recommended for large batches:
 
 ```bash
@@ -118,6 +176,7 @@ cargo run --release --example fintech_hybrid_batch
 
 | Example | Focus |
 |---------|--------|
+| [`basics`](par-validator/examples/basics.rs) | **Starter:** one field, mandatory + parallel rules, **no GPU** |
 | [`hybrid_gpu`](par-validator/examples/hybrid_gpu.rs) | Small walkthrough: Rayon + GPU together |
 | [`fintech_rayon_nested`](par-validator/examples/fintech_rayon_nested.rs) | **~4k** nested ISO-20022–style transfers → flatten to key paths → CPU-only validation |
 | [`fintech_gpu_batch`](par-validator/examples/fintech_gpu_batch.rs) | **~12k** numeric rules (2k legs × 6 checks) in **one** GPU `run` |

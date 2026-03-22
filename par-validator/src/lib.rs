@@ -12,6 +12,7 @@
 //! CPU/GPU boundary as **i32 × 100** (no `f32`/`f64` in the shader).
 //!
 //! ## Examples
+//! - `cargo run --example basics` — CPU-only starter  
 //! - `cargo run --example hybrid_gpu` — small hybrid demo  
 //! - `cargo run --example fintech_rayon_nested` — large nested batch, CPU only  
 //! - `cargo run --example fintech_gpu_batch` — large numeric batch, GPU only  
