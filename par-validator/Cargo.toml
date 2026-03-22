@@ -4,5 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-rust-key-paths = {version = "2.9.2"}
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "0.4"
 rayon = "1.11.0"
+rust-key-paths = { version = "2.9.2" }
+wgpu = "22"
+
+[dev-dependencies]
+key-paths-derive = "2.4"
