@@ -6,6 +6,84 @@ The crate is built around [`rust-key-paths`](https://crates.io/crates/rust-key-p
 
 ---
 
+## Beginner’s guide
+
+This section is for you if you are new to the project or to Rust crates that mix **CPU parallelism** and **GPU compute**.
+
+### What you should already know
+
+- **Rust basics**: `cargo`, `struct`, `enum`, `impl`, and reading example binaries under `examples/`.
+- **Optional**: A little exposure to **shaders** or **WebGPU** helps for the numeric path, but you can treat `GpuNumericEngine` as a black box at first.
+
+### What this crate does (in one minute)
+
+1. **String-style validation** — You point at a field on a struct (via **key paths** from `#[derive(Kp)]`), attach rule functions, and call `apply`. **Mandatory** rules run one after another; if one fails, the rest of that builder’s mandatory chain is skipped. **Other** rules for the same field run **in parallel** with [Rayon](https://crates.io/crates/rayon).
+2. **Numeric validation and math** — You fill a `Vec<NumericRule>` with **fixed-point** integers (amounts scaled **×100**). The GPU runs many rules in **one** dispatch and returns a `Vec<NumericOutput>` (error code + optional calculated value).
+
+So: **texty things → CPU + Rayon**, **lots of fixed-point number rules → GPU batch**.
+
+### Prerequisites
+
+- **Rust** (stable, recent; edition 2024 is declared in `Cargo.toml` — use a toolchain that supports it).
+- A **working GPU stack** for examples that call `GpuNumericEngine` (e.g. **Metal** on Apple Silicon, **Vulkan** on many Linux setups, **DX12** on Windows). If the GPU path fails, check drivers / OS support for wgpu.
+
+### First run (step by step)
+
+1. Clone the repo and enter the **crate** directory (the one that contains `Cargo.toml`):
+
+   ```bash
+   cd par-validator
+   ```
+
+2. Run the smallest end-to-end demo (strings on the CPU, numbers on the GPU):
+
+   ```bash
+   cargo run --example hybrid_gpu
+   ```
+
+3. When that works, try a **CPU-only** large batch:
+
+   ```bash
+   cargo run --release --example fintech_rayon_nested
+   ```
+
+4. Then a **GPU-heavy** batch:
+
+   ```bash
+   cargo run --release --example fintech_gpu_batch
+   ```
+
+### Where to read the code (suggested order)
+
+| Order | File | Why |
+|-------|------|-----|
+| 1 | [`examples/hybrid_gpu.rs`](par-validator/examples/hybrid_gpu.rs) | Short story: `RuleBuilder` + `GpuNumericEngine::run` |
+| 2 | [`src/lib.rs`](par-validator/src/lib.rs) | `RuleBuilder` API and docs |
+| 3 | [`src/gpu_numeric.rs`](par-validator/src/gpu_numeric.rs) | Rules, outputs, WGSL shader |
+| 4 | [`examples/fintech_hybrid_batch.rs`](par-validator/examples/fintech_hybrid_batch.rs) | Bigger payload, both layers |
+
+### Concepts cheat sheet
+
+| Term | Meaning |
+|------|---------|
+| **Key path (`Kp`)** | Compile-time accessor to a field, e.g. `MyStruct::field_name()`, from `key-paths-derive`. |
+| **`RuleBuilder`** | Holds a key path + list of rule `fn`s + optional root reference; `apply()` runs the rules. |
+| **Mandatory rule** | Runs first, in order; first failure stops the rest of the mandatory list for that builder. |
+| **`NumericRule`** | One row: value ×100, rule kind, two integer parameters (meaning depends on kind). |
+| **`GpuNumericEngine::run`** | Uploads all rules, runs compute shader once, downloads results (blocking). |
+
+### Flattening nested structs
+
+Your **business** model can be deeply nested (parties, legs, charges). This crate’s `RuleBuilder::new` expects a **`KpType`** from plain `#[derive(Kp)]` fields. A common pattern (see `fintech_rayon_nested`) is a **flat “view” struct** that mirrors nested data for validation only.
+
+### If something goes wrong
+
+- **`cd` to `par-validator`** — Commands assume the crate root next to `src/` and `examples/`.
+- **GPU panic / “no adapter”** — Environment may lack a supported backend; try another machine or update OS/GPU drivers.
+- **Slower than expected** — Use `cargo run --release` for large examples and benchmarks.
+
+---
+
 ## Features
 
 | Layer | What | How |
