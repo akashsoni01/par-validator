@@ -2,7 +2,10 @@
 //! numerics** (GPU / wgpu).
 //!
 //! ## String rules
-//! Use [`RuleBuilder`] with key paths from [`rust_key_paths`] (typically via `key-paths-derive`).
+//! Primary API: [`RuleBuilder`] with [`RuleBuilderError`]-returning rule functions and key paths
+//! from [`rust_key_paths`] (typically via `key-paths-derive`). For **bool predicates** paired with
+//! a fixed error value per rule, see [`builder::Rule`].
+//!
 //! Mandatory rules run **sequentially** and short-circuit on the first failure; remaining rules run
 //! in parallel with Rayon inside [`RuleBuilder::apply`].
 //!
@@ -25,9 +28,11 @@ use std::fmt::Debug;
 use rayon::prelude::*;
 use rust_key_paths::{AccessorTrait, KpType};
 
+pub mod builder;
 pub mod errors;
 pub mod gpu_numeric;
 
+pub use builder::Rule;
 pub use errors::RuleBuilderError;
 
 /// Fluent wrapper around a [`KpType`] (key path) and a set of validation functions.
@@ -37,11 +42,13 @@ pub use errors::RuleBuilderError;
 ///
 /// Rule functions must be `fn` pointers (not closures that capture state) so they can be stored
 /// in a [`Vec`] and shared across Rayon threads.
+///
+/// For the alternative **bool predicate + error value** style, see [`Rule`].
 pub struct RuleBuilder<'a, R, V, E: PartialEq + Eq + Send + Sync> {
-    root: Option<&'a R>,
-    kp: KpType<'a, R, V>,
+    root:            Option<&'a R>,
+    kp:              KpType<'a, R, V>,
     mandatory_rules: Vec<fn(Option<&'a V>) -> RuleBuilderError<E>>,
-    rules: Vec<fn(Option<&'a V>) -> RuleBuilderError<E>>,
+    rules:           Vec<fn(Option<&'a V>) -> RuleBuilderError<E>>,
 }
 
 impl<'a, R, V, E> RuleBuilder<'a, R, V, E>
@@ -56,7 +63,7 @@ where
             root: None,
             kp,
             rules: vec![],
-            mandatory_rules: vec![]
+            mandatory_rules: vec![],
         }
     }
 
@@ -80,12 +87,6 @@ where
         self
     }
 
-    /// Deprecated typo; use [`Self::mandatory_rule`].
-    #[deprecated(note = "use mandatory_rule")]
-    pub fn madatory_rule(self, f: fn(Option<&'a V>) -> RuleBuilderError<E>) -> Self {
-        self.mandatory_rule(f)
-    }
-
     /// Resolves `Option<&V>` via the key path, runs mandatory rules, then runs remaining rules on
     /// a Rayon thread pool.
     pub fn apply(&self) -> Vec<RuleBuilderError<E>> {
@@ -99,5 +100,3 @@ where
         self.rules.par_iter().map(|f| f(val)).collect()
     }
 }
-
-
